@@ -10,6 +10,14 @@ from django.shortcuts import get_object_or_404
 from .models import EmployeeORM, PayrollLedgerORM, SystemRuleConfigurationORM
 from .models import SalaryStructure
 
+############# new #########
+from rest_framework import viewsets, status
+from rest_framework.response import Response
+from rest_framework.decorators import action
+from .models import ClientPayrollRule, SalaryComponent
+from .serializers import ClientPayrollRuleSerializer, SalaryComponentSerializer
+from .services import PayrollRuleDashboardService
+
 @method_decorator(csrf_exempt, name='dispatch')
 class EmployeeCreateView(View):
     """Handles Postman HTTP requests to seed dynamic employee entries into the DB."""
@@ -319,3 +327,45 @@ class SalaryStructureAPIView(View):
             "status": "STRUCTURE_DELETED",
             "message": f"Permanently removed structure template '{structure_name}' and its associated rules."
         }, status=200)
+
+######  new views  ###########
+
+
+class SalaryComponentViewSet(viewsets.ModelViewSet):
+    queryset = SalaryComponent.objects.filter(is_active=True)
+    serializer_class = SalaryComponentSerializer
+
+
+class ClientPayrollRuleViewSet(viewsets.ModelViewSet):
+    queryset = ClientPayrollRule.objects.all()
+    serializer_class = ClientPayrollRuleSerializer
+
+    def get_queryset(self):
+        """ Allow dashboard to filter active components by client out-of-the-box """
+        queryset = ClientPayrollRule.objects.all()
+        client_id = self.request.query_params.get('client_id')
+        if client_id:
+            queryset = queryset.filter(client_id=client_id, effective_to__isnull=True)
+        return queryset
+
+    def create(self, request, *errors, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        try:
+            # Delegate tracking/mutations tasks cleanly over to our service layer
+            new_rule = PayrollRuleDashboardService.create_or_update_rule(
+                client_id=serializer.validated_data['client_id'],
+                component_code=serializer.validated_data['component'].code,
+                validated_data=serializer.validated_data
+            )
+            return Response(ClientPayrollRuleSerializer(new_rule).data, status=status.HTTP_201_CREATED)
+        except ValueError as err:
+            return Response({"detail": str(err)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def destroy(self, request, pk=None):
+        try:
+            PayrollRuleDashboardService.soft_delete_rule(pk)
+            return Response({"detail": "Rule successfully deactivated/deleted from active history."}, status=status.HTTP_200_OK)
+        except ClientPayrollRule.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)

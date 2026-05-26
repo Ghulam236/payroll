@@ -73,3 +73,49 @@ class DynamicSalaryComponentRule(models.Model):
 
     def __str__(self):
         return f"{self.structure.name} -> {self.component_code}"
+
+
+
+########## new implwwmntio from here ###########
+from django.core.exceptions import ValidationError
+
+class SalaryComponentCategory(models.TextChoices):
+    BASE = 'BASE', 'Base Salary'
+    ALLOWANCE = 'ALLOWANCE', 'Allowance'
+    DEDUCTION = 'DEDUCTION', 'Deduction'
+
+class CalculationType(models.TextChoices):
+    FLAT = 'FLAT', 'Fixed Amount'
+    PERCENTAGE = 'PERCENTAGE', 'Percentage Based'
+    SLAB_RANGE = 'SLAB_RANGE', 'Slab/Range Based'
+    CONDITION_BASED = 'CONDITION_BASED', 'Conditional Threshold'
+
+class SalaryComponent(models.Model):
+    code = models.CharField(max_length=50, unique=True, help_text="e.g., BASIC, HRA, PF, PT")
+    name = models.CharField(max_length=100)
+    category = models.CharField(max_length=20, choices=SalaryComponentCategory.choices)
+    is_active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"{self.name} ({self.code})"
+
+class ClientPayrollRule(models.Model):
+    client_id = models.IntegerField(help_text="ID of the client company/tenant")
+    component = models.ForeignKey(SalaryComponent, on_delete=models.PROTECT, to_field='code')
+    calculation_type = models.CharField(max_length=20, choices=CalculationType.choices)
+    
+    # Stores the raw JSON format for the specific type
+    rule_config = models.JSONField(help_text="Dynamic configuration object tailored to calculation_type")
+    
+    effective_from = models.DateField()
+    effective_to = models.DateField(null=True, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'client_payroll_rules'
+        ordering = ['-effective_from']
+
+    def __str__(self):
+        return f"Client {self.client_id} - {self.component_id} ({self.calculation_type})"
